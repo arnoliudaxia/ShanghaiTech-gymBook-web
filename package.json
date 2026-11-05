@@ -9,7 +9,9 @@
     "dev:server": "npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web run build",
-    "start": "node server/src/index.js"
+    "start": "node server/src/index.js",
+    "refresh": "node server/src/refresh.js",
+    "refresh:all": "node server/src/refresh.js --all"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

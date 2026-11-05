@@ -1,17 +1,27 @@
 /**
  * 采集服务：登录 → 发现分类 → 并发拉取 3 天 × 11 时段 → 组装快照并缓存
+ *
+ * 触发来源只有两种：
+ *   - cron 规则文件（server/src/scheduler.js 按 cron.txt 定时调用）
+ *   - 手动调用（POST /api/refresh 或 CLI server/src/refresh.js）
+ * 前端不再触发采集，只读取快照。
  */
 import './env.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { ROOT } from './env.js'
 import { TreeClient, loginOa, SLOTS } from './oa.js'
 
 const USER = process.env.MYUSERNAME
 const PASS = process.env.PASSWORD
 const CONCURRENCY = Number(process.env.CONCURRENCY || 6)
+const CACHE_FILE = path.join(ROOT, 'server/data/snapshot.json')
 
 export const state = {
   status: 'idle', // idle | loading | ready | error
   data: null,
   error: null,
+  trigger: null, // cron | manual
   startedAt: 0,
   finishedAt: 0,
   progress: { done: 0, total: 0 },
@@ -37,11 +47,39 @@ export function recentDates(days = 3) {
   return Array.from({ length: days }, (_, i) => fmt.format(new Date(now + i * 86400000)))
 }
 
-export async function refresh({ includeAll = false, days = 3 } = {}) {
+/* ----------------------------------------------------------- 快照落盘 */
+function persist(data) {
+  try {
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true })
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(data), 'utf8')
+  } catch (err) {
+    console.warn(`[cache] 快照写入失败：${err.message}`)
+  }
+}
+
+function restore() {
+  try {
+    if (!fs.existsSync(CACHE_FILE)) return
+    const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'))
+    if (!data?.venues?.length) return
+    state.data = data
+    state.status = 'ready'
+    state.finishedAt = Date.parse(data.generatedAt) || Date.now()
+    console.log(`[cache] 已载入上次快照：${data.venues.length} 个场馆 / ${data.dates.length} 天（${data.generatedAt}）`)
+  } catch (err) {
+    console.warn(`[cache] 快照读取失败：${err.message}`)
+  }
+}
+
+restore()
+
+/* ----------------------------------------------------------- 采集 */
+export async function refresh({ includeAll = false, days = 3, trigger = 'manual' } = {}) {
   if (state.status === 'loading') return state
 
   state.status = 'loading'
   state.error = null
+  state.trigger = trigger
   state.startedAt = Date.now()
   state.progress = { done: 0, total: 0 }
 
@@ -74,7 +112,7 @@ export async function refresh({ includeAll = false, days = 3 } = {}) {
       await sleep(10)
     })
 
-    state.data = {
+    const data = {
       generatedAt: new Date().toISOString(),
       timezone: 'Asia/Shanghai',
       dates,
@@ -85,15 +123,16 @@ export async function refresh({ includeAll = false, days = 3 } = {}) {
         availability: Object.fromEntries(
           dates.map((date) => [
             date,
-            Object.fromEntries(
-              SLOTS.map((label, i) => [label, cells.get(`${v.id}|${date}|${i + 1}`) ?? null])
-            ),
+            Object.fromEntries(SLOTS.map((label, i) => [label, cells.get(`${v.id}|${date}|${i + 1}`) ?? null])),
           ])
         ),
       })),
     }
+
+    state.data = data
     state.status = 'ready'
     state.finishedAt = Date.now()
+    persist(data)
   } catch (err) {
     state.status = 'error'
     state.error = err?.message || String(err)
@@ -106,6 +145,7 @@ export function snapshot() {
   return {
     status: state.status,
     error: state.error,
+    trigger: state.trigger,
     progress: state.progress,
     startedAt: state.startedAt,
     finishedAt: state.finishedAt,

@@ -1,19 +1,32 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSnapshot, requestRefresh } from './api'
-import { nowInShanghai, relativeDay } from './time'
+import { nowInShanghai } from './time'
 import OverviewMatrix from './components/OverviewMatrix.vue'
 import VenueGrid from './components/VenueGrid.vue'
 
-const snap = ref({ status: 'idle', data: null, error: null, progress: { done: 0, total: 0 } })
+const snap = ref({ status: 'idle', data: null, error: null, progress: { done: 0, total: 0 }, schedule: [] })
 const now = ref(nowInShanghai())
+const clock = ref(Date.now())
 const selected = ref(null)
-let timer = null
+let pollTimer = null
+let clockTimer = null
 
 const data = computed(() => snap.value.data)
 const status = computed(() => snap.value.status)
 const progress = computed(() => snap.value.progress ?? { done: 0, total: 0 })
 const error = computed(() => snap.value.error)
+const schedule = computed(() => snap.value.schedule ?? [])
+const nextRunAt = computed(() => {
+  const times = schedule.value.map((r) => r.nextRunAt).filter(Boolean).map((t) => Date.parse(t)).sort((a, b) => a - b)
+  return times[0] ?? null
+})
+const countdown = computed(() => {
+  if (!nextRunAt.value) return null
+  const sec = Math.round((nextRunAt.value - clock.value) / 1000)
+  if (sec <= 0) return '即将刷新'
+  return sec >= 60 ? `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s 后刷新` : `${sec}s 后刷新`
+})
 
 const current = computed(() => {
   const vs = data.value?.venues ?? []
@@ -34,34 +47,27 @@ const totalFree = computed(() =>
 )
 
 async function load() {
-  snap.value = (await fetchSnapshot()) ?? snap.value
-  if (snap.value.status === 'loading' || !snap.value.data) startPolling()
-  else stopPolling()
-}
-
-function startPolling() {
-  if (timer) return
-  timer = setInterval(async () => {
-    snap.value = await fetchSnapshot()
-    if (snap.value.status !== 'loading' && snap.value.data) stopPolling()
-  }, 2000)
-}
-
-function stopPolling() {
-  if (timer) clearInterval(timer)
-  timer = null
+  const next = await fetchSnapshot()
+  if (next) snap.value = next
 }
 
 async function doRefresh() {
-  snap.value = (await requestRefresh()) ?? snap.value
-  startPolling()
+  const next = await requestRefresh()
+  if (next) snap.value = next
 }
 
 onMounted(() => {
   load()
-  setInterval(() => (now.value = nowInShanghai()), 30000)
+  pollTimer = setInterval(load, 30000)  // 只读轮询，等待 cron 刷新结果
+  clockTimer = setInterval(() => {
+    clock.value = Date.now()
+    now.value = nowInShanghai()
+  }, 1000)
 })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  if (clockTimer) clearInterval(clockTimer)
+})
 </script>
 
 <template>
@@ -71,17 +77,20 @@ onBeforeUnmount(stopPolling)
         <h1>🏟️ 上科大场馆空闲看板</h1>
         <p class="sub">
           数据源：OA 场馆预约系统 · 未来 {{ data?.dates?.length ?? 3 }} 天 ·
-          {{ data ? `${data.venues.length} 个场馆 / ${totalFree} 条可约记录` : '等待采集' }}
+          {{ data ? `${data.venues.length} 个场馆 / ${totalFree} 条可约记录` : '等待首次采集' }}
         </p>
       </div>
       <div class="actions">
         <span v-if="status === 'loading'" class="chip loading">
           <i class="dot" />采集中 {{ progress.done }}/{{ progress.total }}
         </span>
-        <span v-else-if="status === 'error'" class="chip err">采集失败</span>
+        <span v-else-if="status === 'error'" class="chip err">{{ snap.trigger === 'cron' ? '自动刷新失败' : '采集失败' }}</span>
         <span v-else class="chip ok">更新于 {{ updatedAt }}</span>
+        <span v-if="countdown" class="chip sched" :title="schedule.map((r) => r.expression).join(' | ')">
+          ⏱ {{ countdown }}
+        </span>
         <button class="btn" :disabled="status === 'loading'" @click="doRefresh">
-          {{ status === 'loading' ? '采集中…' : '刷新' }}
+          {{ status === 'loading' ? '采集中…' : '手动刷新' }}
         </button>
       </div>
     </header>
@@ -92,8 +101,14 @@ onBeforeUnmount(stopPolling)
         <p>正在登录 OA 并采集 {{ progress.total || '…' }} 个时段…</p>
         <div class="bar"><div class="bar-fill" :style="{ width: progress.total ? `${(progress.done / progress.total) * 100}%` : '8%' }" /></div>
       </template>
-      <p v-else-if="status === 'error'" class="err-text">❌ {{ error }}</p>
-      <button v-else class="btn" @click="doRefresh">开始采集</button>
+      <template v-else-if="status === 'error'">
+        <p class="err-text">❌ {{ error }}</p>
+        <p class="hint">定时任务会在下一个周期重试（{{ countdown ?? '规则未装载' }}）</p>
+      </template>
+      <template v-else>
+        <p>本地无缓存，等待定时采集任务首次执行（{{ countdown ?? '未装载 cron 规则' }}）</p>
+        <button class="btn" @click="doRefresh">立即采集一次</button>
+      </template>
     </main>
 
     <main v-else class="content">
@@ -104,6 +119,7 @@ onBeforeUnmount(stopPolling)
       <footer class="foot">
         <span>时段口径：{{ data.slots[0] }} … {{ data.slots[data.slots.length - 1] }}（11 段）</span>
         <span v-if="data.skipped?.length">已忽略仅整体预约的场馆：{{ data.skipped.join('、') }}</span>
+        <span v-if="schedule.length">刷新规则：{{ schedule.map((r) => r.expression).join(' / ') }}（cron.txt）</span>
         <span>绿色数字 = 该时段仍可约的场地片数</span>
       </footer>
     </main>

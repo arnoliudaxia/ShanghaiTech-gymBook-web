@@ -1,18 +1,17 @@
 # 上科大场馆空闲看板
 
-ShanghaiTech 体育场馆空闲查询的 **Vue 3 + Node.js** 前后端版本。业务逻辑（CAS 认证 + 泛微 OA 树形接口）与 Python 版
-[`ShanghaiTech-gymBook`](../ShanghaiTech-gymBook) 完全等价，只是把「终端打印表格」换成了「网页看板 + REST API」。
+一个展示上科大ShanghaiTech 体育场馆空闲查询的看板
+
+基于 **Vue 3 + Node.js** 。账户认证方式抄了egate的实现方式. 相当于写了一个egate lite版本.
+
 
 ![预览](docs/preview.png)
 
 ## 功能
 
-- 覆盖 OA 里 **全部 13 个场馆分类**（Python 版只查了 4 个），自动发现，不写死
-- 未来 3 天 × 11 个时段（11:00–22:00）的**逐场地**可约情况，而不是简单的有/无
-- 总览热力矩阵 + 单场馆时段明细，悬停可看具体场地名
-- 今天已过去的时段标注「已过」，不会误判成「已约满」
+- 覆盖 OA 里 **全部 13 个场馆分类**，自动发现，不写死
+- 未来 3 天 × 11 个时段（11:00–22:00）的**逐场地**可约情况
 - 服务端缓存快照，前端 2 秒轮询采集进度，避免重复打 OA
-- 并发采集：297 次请求约 6 秒（串行约 40 秒）
 
 ## 快速开始
 
@@ -31,6 +30,26 @@ npm run build             # 产出 web/dist
 npm start                 # http://localhost:8787
 ```
 
+一次性采集（给系统 cron / 任务计划用）：
+
+```bash
+npm run refresh           # 采集一次后退出
+npm run refresh:all       # 连「整体预约」型场馆一起采
+```
+
+## 刷新机制
+
+只有一个文本文件：**`cron.txt`**，标准 crontab 格式 —— `分 时 日 月 周   命令`。
+
+```
+*/10 * * * *   node server/src/refresh.js     ← 默认：每 10 分钟
+```
+
+- 服务端进程内调度器读取前 5 个时间字段并定时刷新；命令字段仅供系统 cron 使用
+- 改完保存即生效（`fs.watchFile` 监听，日志会打印新的下次触发时间）
+- 想让系统 cron 接管：把该行原样加进 `crontab -e`，并把内置调度器停掉（`CRON_FILE=/dev/null npm start`）
+- 支持 `*` / `*/n` / `a-b` / `a-b/n` / `a,b,c`；周字段 0 与 7 都是周日
+
 > 本机 npm 配置了 `omit=dev` 且 `NODE_ENV=production`，装依赖需要 `npm install --include=dev`，
 > 否则 `vite` / `concurrently` 不会装上。`npm run setup` 里已带 `--include=dev`。
 
@@ -38,11 +57,16 @@ npm start                 # http://localhost:8787
 
 ```
 gymbook-web/
+├─ cron.txt             # ★ 刷新规则（crontab 格式，默认 */10）
 ├─ server/
+│  ├─ data/            # 采集快照缓存（gitignore）
 │  └─ src/
 │     ├─ env.js        # .env 加载（必须最先执行）
 │     ├─ oa.js         # CAS 登录 + AES 密码加密 + 树接口客户端（逻辑等价 Python 版）
-│     ├─ service.js    # 发现分类 → 并发采集 → 快照缓存
+│     ├─ service.js    # 发现分类 → 并发采集 → 快照缓存/落盘
+│     ├─ cron.js       # cron 表达式解析（无第三方依赖）
+│     ├─ scheduler.js  # 读 cron.txt 定时触发 + 文件热更新
+│     ├─ refresh.js    # CLI 一次性采集
 │     └─ index.js      # Express 路由 + 静态托管
 └─ web/
    └─ src/
@@ -57,8 +81,9 @@ gymbook-web/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 存活 + 采集状态 |
-| GET | `/api/availability` | 快照。未就绪时返回 **202** 并自动触发一次后台采集 |
+| GET | `/api/availability` | 只读快照（含 `schedule` 下次触发时间）。无数据时返回 202 |
 | POST | `/api/refresh` | 手动刷新（`?all=1` 连「整体预约」型场馆一起查）；采集中返回 409 |
+| GET | `/api/schedule` | 当前 cron 规则与下次触发时间 |
 
 返回结构（节选）：
 
@@ -119,5 +144,5 @@ gymbook-web/
 ## 注意事项
 
 - 数据依赖校园网/学校 OA 可达；校外需 WebVPN。
-- 采集是全量刷新（297 次请求），别在前端高频点刷新；缓存由服务端统一管理。
+- 采集是全量刷新（297 次请求），频率不要低于 5 分钟；「手动刷新」按钮仅为临时查看，正常节奏交给 cron.txt。
 - `.env` 含明文密码，已在 `.gitignore` 中排除。

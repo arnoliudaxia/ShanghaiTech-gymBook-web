@@ -35,6 +35,7 @@ body {
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: rgba(15, 23, 42, .6); color: var(--muted); }
 .chip.ok { color: #86efac; border-color: rgba(52, 211, 153, .35); }
 .chip.err { color: #fca5a5; border-color: rgba(248, 113, 113, .4); }
+.chip.sched { color: #cbd5e1; border-color: rgba(148, 163, 184, .35); }
 .chip.loading { color: #7dd3fc; border-color: rgba(56, 189, 248, .4); }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; animation: pulse 1.1s infinite; }
 @keyframes pulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
