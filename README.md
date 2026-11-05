@@ -23,6 +23,9 @@ npm run setup             # 安装 server 与 web 依赖
 npm run dev               # 开发：API(8787) + Vite(5173)，浏览器打开 5173
 ```
 
+> ⚠️ `:8787` 托管的是**上一次 `npm run build` 的产物**（`web/dist`），不是实时源码。
+> 改完前端要么看 Vite 的 `:5173`，要么重新 `npm run build`。服务端会检测构建是否过期并告警。
+
 生产模式（单端口托管前端 + API）：
 
 ```bash

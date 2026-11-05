@@ -36,6 +36,21 @@ app.get('/api/schedule', (_req, res) => res.json({ file: CRON_FILE, rules: sched
 // 生产模式：直接托管 web/dist
 const dist = path.join(ROOT, 'web/dist')
 if (fs.existsSync(dist)) {
+  // 构建过期检测：源码比 dist 新时提醒，避免以为改了代码却没生效
+  const assetsMtime = Math.max(
+    fs.statSync(path.join(dist, 'index.html')).mtimeMs,
+    ...fs.readdirSync(path.join(dist, 'assets')).map((f) => fs.statSync(path.join(dist, 'assets', f)).mtimeMs)
+  )
+  const newestSrc = fs
+    .readdirSync(path.join(ROOT, 'web/src'), { recursive: true })
+    .map((f) => path.join(ROOT, 'web/src', f))
+    .filter((f) => fs.statSync(f).isFile())
+    .reduce((max, f) => Math.max(max, fs.statSync(f).mtimeMs), 0)
+  if (newestSrc > assetsMtime) {
+    console.warn('[web] ⚠️ web/dist 比 web/src 旧，当前 :' + PORT + ' 托管的是旧构建。')
+    console.warn('[web]    开发用 http://localhost:5173（vite dev）；生产请先 npm run build')
+  }
+
   app.use(express.static(dist))
   app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(dist, 'index.html')))
 }
