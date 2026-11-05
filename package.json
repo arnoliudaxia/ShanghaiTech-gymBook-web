@@ -1,0 +1,17 @@
+{
+  "name": "gymbook-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "上科大场馆空闲看板 · Vue 3 + Node.js",
+  "scripts": {
+    "setup": "npm install --include=dev && npm --prefix server install --include=dev && npm --prefix web install --include=dev",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "node server/src/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
