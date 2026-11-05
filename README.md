@@ -64,8 +64,9 @@ npm run refresh:all       # 连「整体预约」型场馆一起采
 换算关系：`600s`/`10m` → `*/10 * * * *`，`1h` → `0 * * * *`，`2h` → `0 */2 * * *`，
 `90s` → 按 2 分钟 `*/2 * * * *`（会告警）。
 
-> 本机 npm 配置了 `omit=dev` 且 `NODE_ENV=production`，装依赖需要 `npm install --include=dev`，
-> 否则 `vite` / `concurrently` 不会装上。`npm run setup` 里已带 `--include=dev`。
+> **关于 `NODE_ENV=production`**：本机终端环境里存在该变量，npm 会据此自动推导出 `omit=["dev"]`，
+> 导致 `vite` / `concurrently` 等 devDependency 被静默跳过（报错形如 `'vite' 不是内部或外部命令`）。
+> 项目里三个 `.npmrc` 已写 `omit=` 显式清空，`npm run setup` 也带 `--include=dev`，双保险。
 
 ## 目录结构
 
