@@ -3,9 +3,69 @@
  * 文件里每个非注释行 = 一条规则；只使用前 5 个时间字段，命令字段忽略
  */
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { nextRun, parseCron } from './cron.js'
 
-const DEFAULT_FILE = new URL('../../cron.txt', import.meta.url).pathname
+const DEFAULT_FILE = fileURLToPath(new URL('../../cron.txt', import.meta.url))
+
+/** 解析 "10m" / "600s" / "15min" / "1h" / "600"(秒) → 秒 */
+export function parseDuration(input) {
+  const m = String(input).trim().match(/^(\d+)\s*(s|sec|secs|m|min|mins|h|hr|hrs)?$/i)
+  if (!m) throw new Error(`无法解析刷新间隔: ${input}（示例：10m / 600s / 1h）`)
+  const n = Number(m[1])
+  const unit = (m[2] || 'm').toLowerCase()
+  return unit.startsWith('h') ? n * 3600 : unit.startsWith('s') ? n : n * 60
+}
+
+/** 秒 → cron 表达式（cron 最小粒度 1 分钟，不足一分钟的向上取整并告警） */
+export function intervalToCron(seconds, warn = console.warn) {
+  let minutes = seconds / 60
+  if (minutes < 1) {
+    warn(`[cron] REFRESH_INTERVAL=${seconds}s 小于 1 分钟，按 1 分钟处理（cron 最小粒度）`)
+    minutes = 1
+  }
+  if (!Number.isInteger(minutes)) {
+    const rounded = Math.ceil(minutes)
+    warn(`[cron] REFRESH_INTERVAL 不是整分钟，向上取整为 ${rounded} 分钟`)
+    minutes = rounded
+  }
+  if (minutes < 60) return `*/${minutes} * * * *`
+  if (minutes === 60) return '0 * * * *'
+  if (minutes % 60 === 0 && minutes < 1440) return `0 */${minutes / 60} * * *`
+  if (minutes % 1440 === 0) return `0 0 */${minutes / 1440} * *`
+  throw new Error(`REFRESH_INTERVAL 暂时只支持整分钟 / 整小时 / 整天的间隔，收到 ${seconds}s`)
+}
+
+/**
+ * 规则来源优先级：
+ *   1. CRON_DISABLED=1          → 停用自动刷新
+ *   2. CRON_EXPR                → 直接用该 cron 表达式
+ *   3. REFRESH_INTERVAL         → 换算成 cron 表达式（如 10m → *\/10 * * * *）
+ *   4. cron.txt（CRON_FILE 可改路径）
+ */
+export function resolveRules(file = DEFAULT_FILE) {
+  const disabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.CRON_DISABLED || '').toLowerCase())
+  if (disabled) return { source: 'CRON_DISABLED', rules: [] }
+
+  const expr = process.env.CRON_EXPR
+  if (expr) {
+    return {
+      source: 'CRON_EXPR',
+      rules: [{ line: 0, expression: expr.trim().split(/\s+/).slice(0, 5).join(' '), command: '', cron: parseCron(expr) }],
+    }
+  }
+
+  const interval = process.env.REFRESH_INTERVAL
+  if (interval) {
+    const expression = intervalToCron(parseDuration(interval))
+    return {
+      source: `REFRESH_INTERVAL=${interval} → ${expression}`,
+      rules: [{ line: 0, expression, command: '', cron: parseCron(expression) }],
+    }
+  }
+
+  return { source: `cron.txt(${file})`, rules: loadRules(file) }
+}
 
 export function loadRules(file = DEFAULT_FILE) {
   const text = fs.readFileSync(file, 'utf8')
@@ -34,16 +94,20 @@ export function loadRules(file = DEFAULT_FILE) {
  */
 export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.log } = {}) {
   let rules
+  let source = ''
   try {
-    rules = loadRules(file)
+    const resolved = resolveRules(file)
+    rules = resolved.rules
+    source = resolved.source
+    onLog(`[cron] 规则来源：${source}`)
   } catch (err) {
-    onLog(`[cron] 规则文件加载失败：${err.message}`)
+    onLog(`[cron] 规则加载失败：${err.message}`)
     return { rules: [], stop() {}, describe: () => [] }
   }
 
   if (!rules.length) {
-    onLog('[cron] cron.txt 里没有有效规则，自动刷新已禁用（仅支持手动刷新）')
-    return { rules, stop() {}, describe: () => [] }
+    onLog('[cron] 没有有效规则，自动刷新已禁用（仅支持手动刷新）')
+    return { rules, source, stop() {}, describe: () => [] }
   }
 
   const arm = (rule) => {
@@ -79,8 +143,9 @@ export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.l
     onLog(`[cron] 已装载规则 ${rule.expression}（第 ${rule.line} 行），下次 ${fmt(rule.nextRunAt)}`)
   }
 
-  // 监听文件变化：直接改 cron.txt 即可生效，无需重启服务
+  // 监听文件变化：直接改 cron.txt 即可生效，无需重启服务（env 覆盖时不监听）
   let reloading = false
+  if (!source.startsWith('cron.txt')) return finish()
   fs.watchFile(file, { interval: 2000 }, () => {
     if (reloading) return
     reloading = true
@@ -101,14 +166,19 @@ export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.l
     }, 300)
   })
 
-  return {
-    rules,
-    stop() {
-      fs.unwatchFile(file)
-      for (const r of rules) if (r.timer) clearTimeout(r.timer)
-    },
-    describe: () =>
-      rules.map((r) => ({ expression: r.expression, nextRunAt: r.nextRunAt?.toISOString() ?? null })),
+  return finish()
+
+  function finish() {
+    return {
+      source,
+      rules,
+      stop() {
+        fs.unwatchFile(file)
+        for (const r of rules) if (r.timer) clearTimeout(r.timer)
+      },
+      describe: () =>
+        rules.map((r) => ({ expression: r.expression, nextRunAt: r.nextRunAt?.toISOString() ?? null, source })),
+    }
   }
 }
 

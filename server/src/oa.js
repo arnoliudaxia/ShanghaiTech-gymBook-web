@@ -32,6 +32,8 @@ export const SLOTS = Array.from({ length: 11 }, (_, i) => {
 })
 
 export class LoginError extends Error {}
+/** 采集途中 shkjdx_session 失效（被踢下线 / 过期 / 需要重新认证） */
+export class AuthLostError extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -125,6 +127,9 @@ export async function loginOa(username, password) {
 
   const text = await post.text()
   if (/authError|用户名或密码|incorrectPassword/.test(text)) throw new LoginError('用户名或密码错误')
+  if (text.includes('pwdEncryptSalt') && /captcha|验证码/i.test(text)) {
+    throw new LoginError('CAS 要求输入验证码（通常是失败次数过多触发），请在浏览器手动登录一次后再试')
+  }
 
   const session = jar.get('shkjdx_session')
   if (!session) throw new LoginError('登录结束但没拿到 shkjdx_session')
@@ -132,6 +137,22 @@ export async function loginOa(username, password) {
 }
 
 /* ------------------------------------------------------------------ 树接口 */
+
+/**
+ * 判断响应是否代表“登录态丢失”：
+ *   - 3xx 重定向到 CAS/OA 登录页
+ *   - 200 但响应体不是 JSON 数组（登录页 HTML、错误页、空响应）
+ * 注意：该接口正常响应的 content-type 也是 text/html（返回的是 JSON 字符串），
+ * 所以**不能**按 content-type 判断，只能看响应体是否以 '[' 开头。
+ * 否则会把“约满”和“掉线”混为一谈，写出脏数据。
+ */
+function looksAuthLost(res, text) {
+  if (res.status >= 300 && res.status < 400) {
+    const loc = res.headers.get('location') || ''
+    return /authserver|login|ids\.shanghaitech/i.test(loc)
+  }
+  return !text.startsWith('[')
+}
 export class TreeClient {
   constructor(sessionCookie, { retries = 3, timeout = 8000 } = {}) {
     this.cookie = `shkjdx_session=${sessionCookie}`
@@ -158,8 +179,10 @@ export class TreeClient {
           signal: AbortSignal.timeout(this.timeout),
         })
         const text = (await res.text()).trim()
+        if (looksAuthLost(res, text)) throw new AuthLostError('shkjdx_session 已失效或过期')
         return text.startsWith('[') ? JSON.parse(text) : []
-      } catch {
+      } catch (err) {
+        if (err instanceof AuthLostError) throw err // 失效不做重试，交给上层重登
         if (attempt === this.retries - 1) return null
         await sleep(300 * (attempt + 1))
       }

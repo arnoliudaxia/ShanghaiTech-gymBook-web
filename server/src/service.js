@@ -10,7 +10,7 @@ import './env.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT } from './env.js'
-import { TreeClient, loginOa, SLOTS } from './oa.js'
+import { AuthLostError, TreeClient, loginOa, SLOTS } from './oa.js'
 
 const USER = process.env.MYUSERNAME
 const PASS = process.env.PASSWORD
@@ -86,8 +86,7 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
   try {
     if (!USER || !PASS) throw new Error('未配置 MYUSERNAME / PASSWORD')
 
-    const cookie = await loginOa(USER, PASS)
-    const tree = new TreeClient(cookie)
+    let tree = new TreeClient(await loginOa(USER, PASS))
 
     const all = await tree.discover()
     if (!all.length) throw new Error('未发现任何场馆分类，接口可能又变了')
@@ -105,12 +104,42 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
     }
     state.progress.total = tasks.length
 
-    await pool(tasks, CONCURRENCY, async ({ venue, date, slot }) => {
-      const courts = await tree.cell(venue, date, slot)
-      cells.set(`${venue.id}|${date}|${slot}`, courts)
-      state.progress.done++
-      await sleep(10)
-    })
+    const keyOf = (t) => `${t.venue.id}|${t.date}|${t.slot}`
+    const authLost = []   // 登录态失效的格子
+    const unreachable = [] // 网络/超时的格子
+
+    const collect = async (list, { countProgress }) => {
+      await pool(list, CONCURRENCY, async (task) => {
+        try {
+          const courts = await tree.cell(task.venue, task.date, task.slot)
+          if (courts === null) unreachable.push(task)
+          else cells.set(keyOf(task), courts)
+        } catch (err) {
+          if (err instanceof AuthLostError) authLost.push(task)
+          else throw err
+        }
+        if (countProgress) state.progress.done++
+        await sleep(10)
+      })
+    }
+
+    await collect(tasks, { countProgress: true })
+
+    // 认证失效：重新登录一次，只重试受影响的格子（不重跑整轮，省 OA 请求）
+    if (authLost.length) {
+      console.warn(`[refresh] 采集中登录态失效，${authLost.length} 个格子受影响，重新登录后重试`)
+      tree = new TreeClient(await loginOa(USER, PASS))
+      await collect(authLost.splice(0), { countProgress: false })
+      if (authLost.length) throw new Error(`登录态反复失效，${authLost.length} 个格子未能取到`)
+    }
+
+    const missing = tasks.length - cells.size
+    const missRatio = missing / tasks.length
+    if (missRatio > 0.2) {
+      // 数据太残缺，宁可不更新，也不要用错的“全约满”覆盖上次快照
+      throw new Error(`采集失败过多（${missing}/${tasks.length}），已保留上次快照`)
+    }
+    if (missing > 0) console.warn(`[refresh] 有 ${missing} 个格子未取到，标记为 null（前端显示 ×）`)
 
     const data = {
       generatedAt: new Date().toISOString(),
@@ -118,6 +147,7 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
       dates,
       slots: SLOTS,
       skipped,
+      missing,
       venues: venues.map((v) => ({
         ...v,
         availability: Object.fromEntries(
