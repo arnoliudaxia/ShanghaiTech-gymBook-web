@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { sportTheme } from '../sports'
 import { cleanName, isPast, relativeDay, shortDate } from '../time'
 
 const props = defineProps({
@@ -42,19 +43,24 @@ const daySummary = (date) => slots.value.filter((s) => state(date, s).kind === '
 
 // 切换场馆时清空选中
 watch(() => props.venue.id, () => (picked.value = null))
+watch([() => props.venue.availability, () => props.now], () => {
+  if (!picked.value) return
+  const latest = state(picked.value.date, picked.value.slot)
+  picked.value = latest.kind === 'free' ? { ...picked.value, courts: latest.courts } : null
+})
 </script>
 
 <template>
-  <section class="panel">
+  <section id="venue-detail" class="panel venue-panel" :style="{ '--sport': sportTheme(venue.name).color }" aria-labelledby="detail-title">
     <div class="panel-head">
-      <h2>
+      <h2 id="detail-title"><span class="step-number">02</span>
         {{ cleanName(venue.name) }}
         <span class="tag">{{ venue.isParent ? `${venue.children} 片` : '整体' }}</span>
       </h2>
-      <span class="hint">点击绿色格子查看具体场地</span>
+      <span class="hint">选时段，查看具体场地</span>
     </div>
 
-    <div class="detail">
+    <div class="detail" :style="{ '--days': dates.length }">
       <div class="detail-head">
         <span class="col-slot">时段</span>
         <span v-for="d in dates" :key="d" class="col-date">
@@ -74,13 +80,14 @@ watch(() => props.venue.id, () => (picked.value = null))
             :class="[s.kind, { picked: isPicked(d, slot) }]"
             :style="style(s)"
             :disabled="s.kind !== 'free'"
-            :aria-label="`${d} ${slot} ${s.kind === 'free' ? (single ? '可约' : s.courts.length + ' 片可约') : ''}`"
+            :aria-pressed="isPicked(d, slot)"
+            :aria-label="`${d} ${slot} ${s.kind === 'free' ? (single ? '可约' : s.courts.length + ' 片可约') : ({ full: '约满', past: '已过', error: '获取失败' }[s.kind])}`"
             @click="pick(d, slot)"
           >
-            <b v-if="s.kind === 'free'" :class="{ mark: single }">{{ single ? '✓' : s.courts.length }}</b>
-            <b v-else-if="s.kind === 'full'">—</b>
+            <b v-if="s.kind === 'free'" :class="{ mark: single }">{{ single ? '可约' : s.courts.length + ' 片' }}</b>
+            <b v-else-if="s.kind === 'full'">约满</b>
             <b v-else-if="s.kind === 'past'">已过</b>
-            <b v-else>×</b>
+            <b v-else>未知</b>
           </button>
         </template>
       </div>
@@ -88,7 +95,7 @@ watch(() => props.venue.id, () => (picked.value = null))
 
     <!-- 选中格子：列出具体可约场地 -->
     <transition name="fade">
-      <div v-if="picked" class="picked-panel">
+      <div v-if="picked" class="picked-panel" aria-live="polite">
         <div class="picked-head">
           <b>{{ relativeDay(picked.date, now) }} {{ shortDate(picked.date) }} · {{ picked.slot }}</b>
           <span class="picked-count">{{ single ? '可约' : `${picked.courts.length} / ${venue.children} 片可约` }}</span>

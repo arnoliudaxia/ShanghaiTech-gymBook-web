@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSnapshot } from './api'
-import { nowInShanghai } from './time'
+import { freeSlotCount, nowInShanghai } from './time'
 import OverviewMatrix from './components/OverviewMatrix.vue'
 import VenueGrid from './components/VenueGrid.vue'
 
@@ -15,7 +15,6 @@ let clockTimer = null
 const data = computed(() => snap.value.data)
 const status = computed(() => snap.value.status)
 const progress = computed(() => snap.value.progress ?? { done: 0, total: 0 })
-const error = computed(() => snap.value.error)
 const schedule = computed(() => snap.value.schedule ?? [])
 const nextRunAt = computed(() => {
   const times = schedule.value.map((r) => r.nextRunAt).filter(Boolean).map((t) => Date.parse(t)).sort((a, b) => a - b)
@@ -39,16 +38,26 @@ const updatedAt = computed(() => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(t))
 })
 
-const totalFree = computed(() =>
-  (data.value?.venues ?? []).reduce(
-    (sum, v) => sum + Object.values(v.availability).reduce((s, row) => s + Object.values(row).filter((c) => Array.isArray(c) && c.length).length, 0),
-    0
-  )
-)
+const totalFree = computed(() => (data.value?.venues ?? []).reduce(
+  (sum, venue) => sum + (data.value?.dates ?? []).reduce((n, date) => n + freeSlotCount(venue, date, now.value), 0), 0))
+const connectionError = ref(false)
+
+function selectVenue(id) {
+  selected.value = id
+  if (window.matchMedia('(max-width: 720px)').matches) {
+    document.getElementById('venue-detail')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+  }
+}
 
 async function load() {
-  const next = await fetchSnapshot()
-  if (next) snap.value = next
+  try {
+    const next = await fetchSnapshot()
+    if (!next) throw new Error('No snapshot')
+    snap.value = next
+    connectionError.value = false
+  } catch {
+    connectionError.value = true
+  }
 }
 
 onMounted(() => {
@@ -68,52 +77,33 @@ onBeforeUnmount(() => {
 <template>
   <div class="shell">
     <header class="topbar">
-      <div class="brand">
-        <h1>🏟️ 上科大场馆空闲看板</h1>
-        <p class="sub">
-          数据源：OA 场馆预约系统 · 未来 {{ data?.dates?.length ?? 3 }} 天 ·
-          {{ data ? `${data.venues.length} 个场馆 / ${totalFree} 条可约记录` : '等待首次采集' }}
-        </p>
-      </div>
-      <div class="actions">
-        <span v-if="status === 'loading'" class="chip loading">
-          <i class="dot" />采集中 {{ progress.done }}/{{ progress.total }}
-        </span>
-        <span v-else-if="status === 'error'" class="chip err">{{ snap.trigger === 'cron' ? '自动刷新失败' : '采集失败' }}</span>
-        <span v-else class="chip ok">更新于 {{ updatedAt }}</span>
-        <span v-if="countdown" class="chip sched" :title="schedule.map((r) => r.expression).join(' | ')">
-          ⏱ {{ countdown }}
-        </span>
+      <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">S/</span><span>上科大 · 运动场馆<small>SHANGHAITECH / SPORTS</small></span></a>
+      <div class="actions" role="status">
+        <span v-if="connectionError" class="chip err">连接中断 · 自动重试中</span>
+        <span v-else-if="status === 'loading'" class="chip loading"><i class="dot" />更新中 {{ progress.done }}/{{ progress.total }}</span>
+        <span v-else-if="status === 'error'" class="chip err">更新失败 · 稍后重试</span>
+        <span v-else class="chip ok">{{ data ? `更新于 ${updatedAt}` : '等待更新' }}</span>
+        <span v-if="countdown" class="refresh-time">{{ countdown }}</span>
       </div>
     </header>
 
-    <main v-if="!data" class="empty">
-      <div v-if="status === 'loading'" class="spinner" />
-      <template v-if="status === 'loading'">
-        <p>正在登录 OA 并采集 {{ progress.total || '…' }} 个时段…</p>
-        <div class="bar"><div class="bar-fill" :style="{ width: progress.total ? `${(progress.done / progress.total) * 100}%` : '8%' }" /></div>
-      </template>
-      <template v-else-if="status === 'error'">
-        <p class="err-text">❌ {{ error }}</p>
-        <p class="hint">定时任务会在下一个周期重试（{{ countdown ?? '规则未装载' }}）</p>
-      </template>
-      <template v-else>
-        <p>本地无缓存，等待定时采集任务首次执行（{{ countdown ?? '未装载 cron 规则' }}）</p>
-        <p class="hint">刷新只由 cron.txt / 环境变量驱动，页面不提供手动采集</p>
-      </template>
+    <section class="intro">
+      <div><p class="eyebrow">MAKE TIME. GET MOVING.</p><h1>今天，<span>上场。</span></h1><p class="intro-copy">找个空场，来场尽兴的运动。</p></div>
+      <div v-if="data" class="intro-stat"><strong>{{ totalFree }}<span>↗</span></strong><p>未来 {{ data.dates.length }} 天 · 可约时段</p><small>{{ data.venues.length }} 个场馆 · 预约请前往 OA</small></div>
+    </section>
+
+    <main v-if="!data" class="empty" role="status">
+      <template v-if="connectionError"><p>暂时无法连接，请稍后再试。</p><p class="hint">页面会自动重试。</p></template>
+      <template v-else-if="status === 'loading'"><div class="spinner" /><p>正在更新场馆空闲信息…</p><div class="bar"><div class="bar-fill" :style="{ width: progress.total ? `${progress.done / progress.total * 100}%` : '8%' }" /></div></template>
+      <template v-else-if="status === 'error'"><p class="err-text">场馆信息暂时不可用</p><p class="hint">{{ countdown ?? '等待下次自动更新' }}</p></template>
+      <template v-else><p>场馆信息准备中</p><p class="hint">{{ countdown ?? '首次更新完成后将自动显示' }}</p></template>
     </main>
 
     <main v-else class="content">
-      <OverviewMatrix :venues="data.venues" :dates="data.dates" :now="now" :selected="current?.id" @select="selected = $event" />
-
+      <p v-if="status === 'error' || connectionError" class="data-notice" role="status">当前展示上次成功获取的数据，空闲情况可能已变化。</p>
+      <OverviewMatrix :venues="data.venues" :dates="data.dates" :now="now" :selected="current?.id" @select="selectVenue" />
       <VenueGrid v-if="current" :venue="current" :dates="data.dates" :now="now" />
-
-      <footer class="foot">
-        <span>时段口径：{{ data.slots[0] }} … {{ data.slots[data.slots.length - 1] }}（11 段）</span>
-        <span v-if="data.skipped?.length">已忽略仅整体预约的场馆：{{ data.skipped.join('、') }}</span>
-        <span v-if="schedule.length">刷新规则：{{ schedule.map((r) => r.expression).join(' / ') }}（cron.txt）</span>
-        <span>绿色 ✓ = 可约（单片场馆）；绿色数字 = 该时段仍可约的场地片数</span>
-      </footer>
+      <footer class="foot"><span>数据来自 OA 场馆预约系统 · 以实际预约页面为准</span><span>所有时间均为北京时间</span></footer>
     </main>
   </div>
 </template>
