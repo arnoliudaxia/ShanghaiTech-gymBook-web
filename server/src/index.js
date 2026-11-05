@@ -29,14 +29,6 @@ app.get('/api/availability', (_req, res) => {
   res.status(snap.data ? 200 : 202).json({ ...snap, schedule: scheduleOf() })
 })
 
-/** 手动刷新（显式用户操作，不影响 cron 排期） */
-app.post('/api/refresh', (req, res) => {
-  if (snapshot().status === 'loading') return res.status(409).json({ ...snapshot(), schedule: scheduleOf() })
-  const includeAll = req.query.all === '1' || req.body?.includeAll === true || INCLUDE_ALL
-  void refresh({ includeAll, trigger: 'manual' })
-  res.status(202).json({ ...snapshot(), schedule: scheduleOf() })
-})
-
 app.get('/api/schedule', (_req, res) => res.json({ file: CRON_FILE, rules: scheduleOf(), trigger: snapshot().trigger }))
 
 // 生产模式：直接托管 web/dist

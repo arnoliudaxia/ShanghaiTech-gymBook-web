@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { fetchSnapshot, requestRefresh } from './api'
+import { fetchSnapshot } from './api'
 import { nowInShanghai } from './time'
 import OverviewMatrix from './components/OverviewMatrix.vue'
 import VenueGrid from './components/VenueGrid.vue'
@@ -51,11 +51,6 @@ async function load() {
   if (next) snap.value = next
 }
 
-async function doRefresh() {
-  const next = await requestRefresh()
-  if (next) snap.value = next
-}
-
 onMounted(() => {
   load()
   pollTimer = setInterval(load, 30000)  // 只读轮询，等待 cron 刷新结果
@@ -89,9 +84,6 @@ onBeforeUnmount(() => {
         <span v-if="countdown" class="chip sched" :title="schedule.map((r) => r.expression).join(' | ')">
           ⏱ {{ countdown }}
         </span>
-        <button class="btn" :disabled="status === 'loading'" @click="doRefresh">
-          {{ status === 'loading' ? '采集中…' : '手动刷新' }}
-        </button>
       </div>
     </header>
 
@@ -107,7 +99,7 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
         <p>本地无缓存，等待定时采集任务首次执行（{{ countdown ?? '未装载 cron 规则' }}）</p>
-        <button class="btn" @click="doRefresh">立即采集一次</button>
+        <p class="hint">刷新只由 cron.txt / 环境变量驱动，页面不提供手动采集</p>
       </template>
     </main>
 
