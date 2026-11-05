@@ -3,7 +3,7 @@ import express from 'express'
 import path from 'node:path'
 import fs from 'node:fs'
 import { ROOT } from './env.js'
-import { refresh, snapshot } from './service.js'
+import { refresh, sessionInfo, snapshot } from './service.js'
 import { startScheduler } from './scheduler.js'
 
 const PORT = Number(process.env.GYMBOOK_PORT || process.env.PORT || 8787)
@@ -21,7 +21,9 @@ const scheduler = startScheduler({
 
 const scheduleOf = () => scheduler.describe()
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, status: snapshot().status, schedule: scheduleOf() }))
+app.get('/api/health', (_req, res) =>
+  res.json({ ok: true, status: snapshot().status, schedule: scheduleOf(), session: sessionInfo() })
+)
 
 /** 只读快照，前端不再触发采集 */
 app.get('/api/availability', (_req, res) => {

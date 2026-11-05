@@ -16,6 +16,7 @@ const USER = process.env.MYUSERNAME
 const PASS = process.env.PASSWORD
 const CONCURRENCY = Number(process.env.CONCURRENCY || 6)
 const CACHE_FILE = path.join(ROOT, 'server/data/snapshot.json')
+const SESSION_FILE = path.join(ROOT, 'server/data/session.json')
 
 export const state = {
   status: 'idle', // idle | loading | ready | error
@@ -47,6 +48,94 @@ export function recentDates(days = 3) {
   return Array.from({ length: days }, (_, i) => fmt.format(new Date(now + i * 86400000)))
 }
 
+/* ----------------------------------------------------------- 认证会话 */
+/**
+ * 会话只登录一次，持久化到 server/data/session.json 后反复复用，
+ * 仅在服务端判定失效（AuthLostError）时才重新认证。
+ * 避免每 10 分钟打一次 CAS 触发风控。
+ */
+const session = { cookie: null, savedAt: 0, lastLoginAt: 0, logins: 0, uses: 0 }
+let loginInflight = null
+
+function persistSession() {
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true })
+    fs.writeFileSync(SESSION_FILE, JSON.stringify({ ...session, cookie: session.cookie }, null, 0), 'utf8')
+  } catch (err) {
+    console.warn(`[auth] 会话写入失败：${err.message}`)
+  }
+}
+
+function restoreSession() {
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return
+    const saved = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'))
+    if (!saved?.cookie) return
+    session.cookie = saved.cookie
+    session.savedAt = saved.savedAt || 0
+    session.lastLoginAt = saved.lastLoginAt || 0
+    session.logins = saved.logins || 0
+    session.uses = saved.uses || 0
+    console.log(`[auth] 已载入上次会话（保存于 ${fmtTime(session.savedAt)}，已复用 ${session.uses} 轮）`)
+  } catch (err) {
+    console.warn(`[auth] 会话读取失败：${err.message}`)
+  }
+}
+
+const fmtTime = (ts) =>
+  ts ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }).format(new Date(ts)) : '—'
+
+/** 取可用会话：有缓存直接复用，没有才登录（并发调用只登录一次） */
+async function ensureSession({ force = false } = {}) {
+  if (force) session.cookie = null
+  if (session.cookie) return session.cookie
+
+  if (!loginInflight) {
+    loginInflight = (async () => {
+      const cookie = await loginOa(USER, PASS)
+      Object.assign(session, { cookie, savedAt: Date.now(), lastLoginAt: Date.now(), logins: session.logins + 1 })
+      persistSession()
+      console.log(`[auth] CAS 登录成功（累计 ${session.logins} 次），会话已保存，后续直接复用`)
+      return cookie
+    })().finally(() => {
+      loginInflight = null
+    })
+  }
+  return loginInflight
+}
+
+function readDiskCookie() {
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return null
+    return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'))?.cookie ?? null
+  } catch {
+    return null
+  }
+}
+
+async function relogin(reason) {
+  console.warn(`[auth] ${reason}，重新认证`)
+  // 多进程（服务 + CLI）共用会话文件时，别抢着登录：磁盘上可能有别的进程刚换的新会话
+  const disk = readDiskCookie()
+  if (disk && disk !== session.cookie) {
+    console.log('[auth] 磁盘上存在更新的会话，先复用它')
+    session.cookie = disk
+    return disk
+  }
+  return ensureSession({ force: true })
+}
+
+export function sessionInfo() {
+  return {
+    hasCookie: Boolean(session.cookie),
+    savedAt: session.savedAt || null,
+    lastLoginAt: session.lastLoginAt || null,
+    logins: session.logins,
+    uses: session.uses,
+    ageSeconds: session.savedAt ? Math.round((Date.now() - session.savedAt) / 1000) : null,
+  }
+}
+
 /* ----------------------------------------------------------- 快照落盘 */
 function persist(data) {
   try {
@@ -72,6 +161,7 @@ function restore() {
 }
 
 restore()
+restoreSession()
 
 /* ----------------------------------------------------------- 采集 */
 export async function refresh({ includeAll = false, days = 3, trigger = 'manual' } = {}) {
@@ -86,9 +176,16 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
   try {
     if (!USER || !PASS) throw new Error('未配置 MYUSERNAME / PASSWORD')
 
-    let tree = new TreeClient(await loginOa(USER, PASS))
+    let tree = new TreeClient(await ensureSession())
 
-    const all = await tree.discover()
+    let all
+    try {
+      all = await tree.discover()
+    } catch (err) {
+      if (!(err instanceof AuthLostError)) throw err
+      tree = new TreeClient(await relogin('发现场馆分类时认证失效'))
+      all = await tree.discover()
+    }
     if (!all.length) throw new Error('未发现任何场馆分类，接口可能又变了')
 
     const venues = all.filter((v) => includeAll || v.children > 0)
@@ -127,8 +224,8 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
 
     // 认证失效：重新登录一次，只重试受影响的格子（不重跑整轮，省 OA 请求）
     if (authLost.length) {
-      console.warn(`[refresh] 采集中登录态失效，${authLost.length} 个格子受影响，重新登录后重试`)
-      tree = new TreeClient(await loginOa(USER, PASS))
+      console.warn(`[refresh] 采集中登录态失效，${authLost.length} 个格子受影响，重新认证后重试`)
+      tree = new TreeClient(await relogin('采集途中认证失效'))
       await collect(authLost.splice(0), { countProgress: false })
       if (authLost.length) throw new Error(`登录态反复失效，${authLost.length} 个格子未能取到`)
     }
@@ -162,6 +259,8 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
     state.data = data
     state.status = 'ready'
     state.finishedAt = Date.now()
+    session.uses += 1
+    persistSession()
     persist(data)
   } catch (err) {
     state.status = 'error'
