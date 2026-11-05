@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { cleanName, isPast, relativeDay, shortDate } from '../time'
 
 const props = defineProps({
@@ -9,6 +9,7 @@ const props = defineProps({
 })
 
 const slots = computed(() => Object.keys(props.venue.availability?.[props.dates[0]] ?? {}))
+const picked = ref(null) // { date, slot, courts }
 
 const state = (date, slot) => {
   if (isPast(date, slot, props.now)) return { kind: 'past' }
@@ -24,8 +25,21 @@ const style = (s) => {
   return { background: `hsla(152, 68%, 45%, ${0.14 + ratio * 0.6})`, borderColor: `hsla(152, 68%, 58%, ${0.3 + ratio * 0.5})` }
 }
 
-const daySummary = (date) =>
-  slots.value.filter((s) => state(date, s).kind === 'free').length
+const isPicked = (date, slot) => picked.value?.date === date && picked.value?.slot === slot
+
+const pick = (date, slot) => {
+  const s = state(date, slot)
+  if (s.kind !== 'free') {
+    picked.value = null
+    return
+  }
+  picked.value = isPicked(date, slot) ? null : { date, slot, courts: s.courts }
+}
+
+const daySummary = (date) => slots.value.filter((s) => state(date, s).kind === 'free').length
+
+// 切换场馆时清空选中
+watch(() => props.venue.id, () => (picked.value = null))
 </script>
 
 <template>
@@ -35,7 +49,7 @@ const daySummary = (date) =>
         {{ cleanName(venue.name) }}
         <span class="tag">{{ venue.isParent ? `${venue.children} 片` : '整体' }}</span>
       </h2>
-      <span class="hint">悬停格子可看具体场地名</span>
+      <span class="hint">点击绿色格子查看具体场地</span>
     </div>
 
     <div class="detail">
@@ -50,22 +64,38 @@ const daySummary = (date) =>
       <div v-for="slot in slots" :key="slot" class="detail-row">
         <span class="col-slot">{{ slot }}</span>
         <template v-for="d in dates" :key="d">
-          <span
+          <button
             v-for="s in [state(d, slot)]"
             :key="s.kind"
+            type="button"
             class="cell"
-            :class="s.kind"
+            :class="[s.kind, { picked: isPicked(d, slot) }]"
             :style="style(s)"
-            :title="s.kind === 'free' ? s.courts.join('、') : s.kind === 'full' ? '已约满' : s.kind === 'past' ? '时段已过' : '请求失败'"
+            :disabled="s.kind !== 'free'"
+            :aria-label="`${d} ${slot} ${s.kind === 'free' ? s.courts.length + ' 片可约' : ''}`"
+            @click="pick(d, slot)"
           >
             <b v-if="s.kind === 'free'">{{ s.courts.length }}</b>
             <b v-else-if="s.kind === 'full'">—</b>
             <b v-else-if="s.kind === 'past'">已过</b>
             <b v-else>×</b>
-          </span>
+          </button>
         </template>
       </div>
     </div>
+
+    <!-- 选中格子：列出具体可约场地 -->
+    <transition name="fade">
+      <div v-if="picked" class="picked-panel">
+        <div class="picked-head">
+          <b>{{ relativeDay(picked.date, now) }} {{ shortDate(picked.date) }} · {{ picked.slot }}</b>
+          <span class="picked-count">{{ picked.courts.length }} / {{ venue.isParent ? venue.children : 1 }} 片可约</span>
+        </div>
+        <div class="courts">
+          <span v-for="c in picked.courts" :key="c" class="court-chip">{{ c }}</span>
+        </div>
+      </div>
+    </transition>
 
     <div class="legend">
       <span><i class="sw full" />约满</span>

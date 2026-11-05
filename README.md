@@ -99,7 +99,7 @@ gymbook-web/
    └─ src/
       ├─ App.vue
       ├─ components/OverviewMatrix.vue   # 场馆 × 日期 热力矩阵
-      ├─ components/VenueGrid.vue        # 时段 × 日期 明细
+      ├─ components/VenueGrid.vue        # 时段 × 日期 明细 + 点击查看具体场地
       ├─ api.js / time.js / styles.css
 ```
 
