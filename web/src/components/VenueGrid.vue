@@ -9,6 +9,8 @@ const props = defineProps({
 })
 
 const slots = computed(() => Object.keys(props.venue.availability?.[props.dates[0]] ?? {}))
+/** 只有一片场地的场馆（含整体预约型）：格子里不显示片数，改用对勾 */
+const single = computed(() => (props.venue.children ?? 0) <= 1)
 const picked = ref(null) // { date, slot, courts }
 
 const state = (date, slot) => {
@@ -72,10 +74,10 @@ watch(() => props.venue.id, () => (picked.value = null))
             :class="[s.kind, { picked: isPicked(d, slot) }]"
             :style="style(s)"
             :disabled="s.kind !== 'free'"
-            :aria-label="`${d} ${slot} ${s.kind === 'free' ? s.courts.length + ' 片可约' : ''}`"
+            :aria-label="`${d} ${slot} ${s.kind === 'free' ? (single ? '可约' : s.courts.length + ' 片可约') : ''}`"
             @click="pick(d, slot)"
           >
-            <b v-if="s.kind === 'free'">{{ s.courts.length }}</b>
+            <b v-if="s.kind === 'free'" :class="{ mark: single }">{{ single ? '✓' : s.courts.length }}</b>
             <b v-else-if="s.kind === 'full'">—</b>
             <b v-else-if="s.kind === 'past'">已过</b>
             <b v-else>×</b>
@@ -89,7 +91,7 @@ watch(() => props.venue.id, () => (picked.value = null))
       <div v-if="picked" class="picked-panel">
         <div class="picked-head">
           <b>{{ relativeDay(picked.date, now) }} {{ shortDate(picked.date) }} · {{ picked.slot }}</b>
-          <span class="picked-count">{{ picked.courts.length }} / {{ venue.isParent ? venue.children : 1 }} 片可约</span>
+          <span class="picked-count">{{ single ? '可约' : `${picked.courts.length} / ${venue.children} 片可约` }}</span>
         </div>
         <div class="courts">
           <span v-for="c in picked.courts" :key="c" class="court-chip">{{ c }}</span>

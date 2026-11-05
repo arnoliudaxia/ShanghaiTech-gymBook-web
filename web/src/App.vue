@@ -112,7 +112,7 @@ onBeforeUnmount(() => {
         <span>时段口径：{{ data.slots[0] }} … {{ data.slots[data.slots.length - 1] }}（11 段）</span>
         <span v-if="data.skipped?.length">已忽略仅整体预约的场馆：{{ data.skipped.join('、') }}</span>
         <span v-if="schedule.length">刷新规则：{{ schedule.map((r) => r.expression).join(' / ') }}（cron.txt）</span>
-        <span>绿色数字 = 该时段仍可约的场地片数</span>
+        <span>绿色 ✓ = 可约（单片场馆）；绿色数字 = 该时段仍可约的场地片数</span>
       </footer>
     </main>
   </div>
