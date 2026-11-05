@@ -12,10 +12,8 @@ const INCLUDE_ALL = process.env.INCLUDE_ALL === '1'
 const app = express()
 app.use(express.json())
 
-/** 调度器：按 cron.txt 定时刷新（默认每 10 分钟） */
-const CRON_FILE = process.env.CRON_FILE || path.join(ROOT, 'cron.txt')
+/** 调度器：按项目根目录的 cron.txt 定时刷新（默认每 10 分钟） */
 const scheduler = startScheduler({
-  file: CRON_FILE,
   handler: () => refresh({ includeAll: INCLUDE_ALL, trigger: 'cron' }),
 })
 
@@ -31,7 +29,7 @@ app.get('/api/availability', (_req, res) => {
   res.status(snap.data ? 200 : 202).json({ ...snap, schedule: scheduleOf() })
 })
 
-app.get('/api/schedule', (_req, res) => res.json({ file: CRON_FILE, rules: scheduleOf(), trigger: snapshot().trigger }))
+app.get('/api/schedule', (_req, res) => res.json({ file: 'cron.txt', rules: scheduleOf(), trigger: snapshot().trigger }))
 
 // 生产模式：直接托管 web/dist
 const dist = path.join(ROOT, 'web/dist')

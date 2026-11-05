@@ -27,9 +27,6 @@ npm run setup             # 安装 server 与 web 依赖
 npm run dev               # 开发：API(8787) + Vite(5173)，浏览器打开 5173
 ```
 
-> ⚠️ `:8787` 托管的是**上一次 `npm run build` 的产物**（`web/dist`），不是实时源码。
-> 改完前端要么看 Vite 的 `:5173`，要么重新 `npm run build`。服务端会检测构建是否过期并告警。
-
 生产模式（单端口托管前端 + API）：
 
 ```bash
@@ -52,10 +49,7 @@ npm run refresh:all       # 连「整体预约」型场馆一起采
 */10 * * * *   node server/src/refresh.js     ← 默认：每 10 分钟
 ```
 
-- 服务端进程内调度器读取前 5 个时间字段并定时刷新；命令字段仅供系统 cron 使用
 - 改完保存即生效（`fs.watchFile` 监听，日志会打印新的下次触发时间）
-- 想让系统 cron 接管：把该行原样加进 `crontab -e`，再设 `CRON_DISABLED=1` 关掉内置调度器
-  （`cron.txt` 的“命令”字段就是给系统 cron 用的，即 `npm run refresh`）
 - 支持 `*` / `*/n` / `a-b` / `a-b/n` / `a,b,c`；周字段 0 与 7 都是周日
 
 ### 也可以用环境变量覆盖（优先级从高到低）
@@ -65,18 +59,7 @@ npm run refresh:all       # 连「整体预约」型场馆一起采
 | `CRON_DISABLED=1` | `1` | 停用进程内调度（用于交给系统 cron 接管） |
 | `CRON_EXPR` | `*/5 * * * *` | 直接给 cron 表达式，**忽略 `cron.txt`** |
 | `REFRESH_INTERVAL` | `10m` / `600s` / `1h` / `600` | 按间隔刷新，自动换算成 cron 表达式（最小粒度 1 分钟，不足则向上取整并告警） |
-| `CRON_FILE` | `./my-cron.txt` | 换一个规则文件路径 |
 
-```bash
-# 每 5 分钟（命令行临时覆盖，不写文件）
-REFRESH_INTERVAL=5m npm start
-
-# 只在工作日 8-22 点每 5 分钟
-CRON_EXPR="*/5 8-22 * * 1-5" npm start
-
-# 交给系统 cron，进程内不再调度
-CRON_DISABLED=1 npm start
-```
 
 换算关系：`600s`/`10m` → `*/10 * * * *`，`1h` → `0 * * * *`，`2h` → `0 */2 * * *`，
 `90s` → 按 2 分钟 `*/2 * * * *`（会告警）。

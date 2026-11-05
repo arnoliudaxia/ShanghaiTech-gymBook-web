@@ -1,6 +1,7 @@
 /**
- * 调度器：读取 cron.txt，按规则在进程内定时触发刷新
+ * 调度器：读取项目根目录的 cron.txt，按规则在进程内定时触发刷新
  * 文件里每个非注释行 = 一条规则；只使用前 5 个时间字段，命令字段忽略
+ * 规则文件位置固定（不再支持改路径），频率可用 CRON_EXPR / REFRESH_INTERVAL 覆盖
  */
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -41,9 +42,9 @@ export function intervalToCron(seconds, warn = console.warn) {
  *   1. CRON_DISABLED=1          → 停用自动刷新
  *   2. CRON_EXPR                → 直接用该 cron 表达式
  *   3. REFRESH_INTERVAL         → 换算成 cron 表达式（如 10m → *\/10 * * * *）
- *   4. cron.txt（CRON_FILE 可改路径）
+ *   4. cron.txt（固定路径）
  */
-export function resolveRules(file = DEFAULT_FILE) {
+export function resolveRules() {
   const disabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.CRON_DISABLED || '').toLowerCase())
   if (disabled) return { source: 'CRON_DISABLED', rules: [] }
 
@@ -64,10 +65,11 @@ export function resolveRules(file = DEFAULT_FILE) {
     }
   }
 
-  return { source: `cron.txt(${file})`, rules: loadRules(file) }
+  return { source: 'cron.txt', rules: loadRules() }
 }
 
-export function loadRules(file = DEFAULT_FILE) {
+export function loadRules() {
+  const file = DEFAULT_FILE
   const text = fs.readFileSync(file, 'utf8')
   const rules = []
   text.split(/\r?\n/).forEach((raw, i) => {
@@ -92,11 +94,11 @@ export function loadRules(file = DEFAULT_FILE) {
 /**
  * 启动调度。handler 收到 rule；返回 Promise 时会被等待（同一规则不重叠执行）。
  */
-export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.log } = {}) {
+export function startScheduler({ handler, onLog = console.log } = {}) {
   let rules
   let source = ''
   try {
-    const resolved = resolveRules(file)
+    const resolved = resolveRules()
     rules = resolved.rules
     source = resolved.source
     onLog(`[cron] 规则来源：${source}`)
@@ -146,14 +148,14 @@ export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.l
   // 监听文件变化：直接改 cron.txt 即可生效，无需重启服务（env 覆盖时不监听）
   let reloading = false
   if (!source.startsWith('cron.txt')) return finish()
-  fs.watchFile(file, { interval: 2000 }, () => {
+  fs.watchFile(DEFAULT_FILE, { interval: 2000 }, () => {
     if (reloading) return
     reloading = true
     setTimeout(() => {
       reloading = false
       for (const r of rules) if (r.timer) clearTimeout(r.timer)
       try {
-        const fresh = loadRules(file)
+        const fresh = loadRules()
         rules.length = 0
         rules.push(...fresh)
         for (const rule of rules) arm(rule)
@@ -173,7 +175,7 @@ export function startScheduler({ file = DEFAULT_FILE, handler, onLog = console.l
       source,
       rules,
       stop() {
-        fs.unwatchFile(file)
+        fs.unwatchFile(DEFAULT_FILE)
         for (const r of rules) if (r.timer) clearTimeout(r.timer)
       },
       describe: () =>
