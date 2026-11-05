@@ -1,5 +1,5 @@
 /**
- * OA 接口客户端 —— 与 Python 版 (ShanghaiTech-gymBook/main_ext.py) 逻辑等价
+ * OA 接口客户端
  *
  * 认证：CAS 统一认证
  *   1. GET  AddRequest.jsp?workflowid=14862  → 302 到 ids.shanghaitech.edu.cn/authserver/login?service=...
