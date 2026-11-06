@@ -126,3 +126,105 @@ body {
   .col-venue small, .matrix-head small { display: none; }
   .brand h1 { font-size: 19px; }
 }
+/* ---------------------------------------------------------------- 预约（半自动） */
+.court-chip {
+  cursor: default;
+  font: inherit;
+  color: inherit;
+  border: 1px solid rgba(120, 200, 165, 0.35);
+  background: rgba(120, 200, 165, 0.1);
+}
+.court-chip:not(.disabled) {
+  cursor: pointer;
+}
+.court-chip:not(.disabled):hover {
+  border-color: rgba(120, 220, 180, 0.75);
+  background: rgba(120, 220, 180, 0.18);
+}
+.court-chip.target {
+  border-color: #6ee7b7;
+  background: rgba(110, 231, 183, 0.28);
+  box-shadow: 0 0 0 2px rgba(110, 231, 183, 0.25);
+}
+.court-chip.disabled {
+  opacity: 0.45;
+}
+
+.book-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(110, 231, 183, 0.28);
+  border-radius: 10px;
+  background: rgba(16, 40, 34, 0.55);
+}
+.book-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.book-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #93a4b3);
+}
+.book-row input,
+.book-row select {
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: #e8f1f5;
+  background: rgba(8, 22, 20, 0.85);
+  border: 1px solid rgba(120, 160, 150, 0.35);
+  border-radius: 6px;
+}
+.book-row input[type='number'] {
+  width: 64px;
+}
+.book-row input[type='text'] {
+  width: 120px;
+}
+.book-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.btn-primary {
+  height: 32px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #05201a;
+  background: linear-gradient(180deg, #7ef0bf, #45cf9b);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.book-tip {
+  font-size: 11px;
+  color: #7d8f9c;
+}
+.book-feedback {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #ffd479;
+}
+
+.quota-warn {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffd479;
+  background: rgba(255, 191, 92, 0.1);
+  border: 1px solid rgba(255, 191, 92, 0.3);
+  border-radius: 8px;
+}

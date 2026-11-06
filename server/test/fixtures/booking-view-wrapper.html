@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- Sanitized structural excerpt from saved completed own ViewRequest wrapper.
+     No request IDs, applicant details, tokens or cookies retained. -->
+<iframe id="bodyiframe" src=""></iframe>
+<script>
+var bodyiframeurl = location.href.substring(location.href.indexOf("ViewRequest.jsp?")+16);
+function setbodyiframe(){
+ document.getElementById("bodyiframe").src="ViewRequestIframe.jsp?"+bodyiframeurl;
+ //initNewRequestFrame();
+ initNewRequestFrame1();
+ eventPush(document.getElementById('bodyiframe'),'load',loadcomplete);
+}
+//window.attachEvent("onload", setbodyiframe);
+if (window.addEventListener){
+ window.addEventListener("load", setbodyiframe, false);
+}else if (window.attachEvent){
+ window.attachEvent("onload", setbodyiframe);
+}else{
+ window.onload=setbodyiframe;
+}
+</script>

@@ -11,12 +11,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { ROOT } from './env.js'
 import { AuthLostError, TreeClient, loginOa, SLOTS } from './oa.js'
+import { createSessionRecovery, createOaReadonlyFetch } from './oa-readonly.js'
 
 const USER = process.env.MYUSERNAME
 const PASS = process.env.PASSWORD
 const CONCURRENCY = Number(process.env.CONCURRENCY || 6)
 const CACHE_FILE = path.join(ROOT, 'server/data/snapshot.json')
 const SESSION_FILE = path.join(ROOT, 'server/data/session.json')
+
+/**
+ * 只采集这几类场馆（与 OA 预约表单的「场馆类型」一致）。
+ * 舞蹈房/拳击房/健美操房/跆拳道房以及室外场地都不在预约范围内，直接忽略。
+ */
+const ALLOWED_VENUES = new Set(['羽毛球场', '乒乓球场', '网球场', '匹克球场', '排球场'])
+export const venueAllowed = (name) => ALLOWED_VENUES.has(String(name ?? '').replace(/^室内/, ''))
 
 export const state = {
   status: 'idle', // idle | loading | ready | error
@@ -55,7 +63,12 @@ export function recentDates(days = 3) {
  * 避免每 10 分钟打一次 CAS 触发风控。
  */
 const session = { cookie: null, savedAt: 0, lastLoginAt: 0, logins: 0, uses: 0 }
-let loginInflight = null
+const sessionRecovery = createSessionRecovery({
+  session,
+  login: () => loginOa(USER, PASS),
+  persist: persistSession,
+  readDiskCookie,
+})
 
 function persistSession() {
   try {
@@ -86,22 +99,8 @@ const fmtTime = (ts) =>
   ts ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' }).format(new Date(ts)) : '—'
 
 /** 取可用会话：有缓存直接复用，没有才登录（并发调用只登录一次） */
-async function ensureSession({ force = false } = {}) {
-  if (force) session.cookie = null
-  if (session.cookie) return session.cookie
-
-  if (!loginInflight) {
-    loginInflight = (async () => {
-      const cookie = await loginOa(USER, PASS)
-      Object.assign(session, { cookie, savedAt: Date.now(), lastLoginAt: Date.now(), logins: session.logins + 1 })
-      persistSession()
-      console.log(`[auth] CAS 登录成功（累计 ${session.logins} 次），会话已保存，后续直接复用`)
-      return cookie
-    })().finally(() => {
-      loginInflight = null
-    })
-  }
-  return loginInflight
+export async function ensureSession(options = {}) {
+  return sessionRecovery.ensureSession(options)
 }
 
 function readDiskCookie() {
@@ -113,17 +112,15 @@ function readDiskCookie() {
   }
 }
 
-async function relogin(reason) {
-  console.warn(`[auth] ${reason}，重新认证`)
-  // 多进程（服务 + CLI）共用会话文件时，别抢着登录：磁盘上可能有别的进程刚换的新会话
-  const disk = readDiskCookie()
-  if (disk && disk !== session.cookie) {
-    console.log('[auth] 磁盘上存在更新的会话，先复用它')
-    session.cookie = disk
-    return disk
-  }
-  return ensureSession({ force: true })
+export async function relogin(reason, expectedCookie) {
+  return sessionRecovery.relogin(reason, expectedCookie)
 }
+
+// Application list/detail adapters may use this directly: GET-only, bounded
+// background renewal. Never use it for cancellation actions or submission.
+export const oaReadonlyFetch = createOaReadonlyFetch({
+  ensureSession, relogin, noteAuthFailure: sessionRecovery.noteAuthFailure,
+})
 
 export function sessionInfo() {
   return {
@@ -176,19 +173,32 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
   try {
     if (!USER || !PASS) throw new Error('未配置 MYUSERNAME / PASSWORD')
 
-    let tree = new TreeClient(await ensureSession())
+    let treeCookie = await ensureSession()
+    let tree = new TreeClient(treeCookie)
 
     let all
     try {
       all = await tree.discover()
     } catch (err) {
       if (!(err instanceof AuthLostError)) throw err
-      tree = new TreeClient(await relogin('发现场馆分类时认证失效'))
+      treeCookie = await relogin('发现场馆分类时认证失效', treeCookie)
+      tree = new TreeClient(treeCookie)
       all = await tree.discover()
     }
     if (!all.length) throw new Error('未发现任何场馆分类，接口可能又变了')
 
-    const venues = all.filter((v) => includeAll || v.children > 0)
+    const venues = all.filter((v) => venueAllowed(v.name) && (includeAll || v.children > 0))
+
+    // 场地树静态列表：名称 → 节点 id，预约时作为 field31883 提交
+    for (const venue of venues) {
+      try {
+        const kids = await tree.children(venue)
+        venue.courtIds = kids ? Object.fromEntries(kids.map((k) => [k.name, k.id])) : {}
+      } catch {
+        venue.courtIds = {}
+      }
+      await sleep(20)
+    }
     const skipped = all.filter((v) => !venues.includes(v)).map((v) => v.name)
     const dates = recentDates(days)
 
@@ -225,7 +235,8 @@ export async function refresh({ includeAll = false, days = 3, trigger = 'manual'
     // 认证失效：重新登录一次，只重试受影响的格子（不重跑整轮，省 OA 请求）
     if (authLost.length) {
       console.warn(`[refresh] 采集中登录态失效，${authLost.length} 个格子受影响，重新认证后重试`)
-      tree = new TreeClient(await relogin('采集途中认证失效'))
+      treeCookie = await relogin('采集途中认证失效', treeCookie)
+      tree = new TreeClient(treeCookie)
       await collect(authLost.splice(0), { countProgress: false })
       if (authLost.length) throw new Error(`登录态反复失效，${authLost.length} 个格子未能取到`)
     }

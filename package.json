@@ -9,6 +9,7 @@
     "dev:server": "npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web run build",
+    "test": "node --test server/test/*.test.js",
     "start": "node server/src/index.js",
     "refresh": "node server/src/refresh.js",
     "refresh:all": "node server/src/refresh.js --all"

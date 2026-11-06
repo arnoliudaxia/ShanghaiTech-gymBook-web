@@ -1,17 +1,7 @@
-/** Asia/Shanghai 的“现在”，与后端日期口径一致 */
-export function nowInShanghai() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date())
-  const get = (t) => parts.find((p) => p.type === t)?.value ?? '00'
-  return { date: `${get('year')}-${get('month')}-${get('day')}`, hm: `${get('hour')}:${get('minute')}` }
-}
+import { bookingDatePolicy, shanghaiNow } from '../../shared/booking-date.mjs'
+
+/** Existing one-second UI timer supplies this same clock to every component. */
+export const nowInShanghai = shanghaiNow
 
 export const slotStart = (slot) => slot.slice(0, 5)
 
@@ -33,6 +23,7 @@ export const relativeDay = (date, now) => {
 
 /** 某场馆某天真正还能约的时段数（排除已过时段与失败） */
 export function freeSlotCount(venue, date, now) {
+  if (!bookingDatePolicy(date, now).allowed) return 0
   const row = venue.availability?.[date] ?? {}
   return Object.entries(row).filter(([slot, courts]) => !isPast(date, slot, now) && Array.isArray(courts) && courts.length > 0).length
 }

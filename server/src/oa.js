@@ -33,7 +33,14 @@ export const SLOTS = Array.from({ length: 11 }, (_, i) => {
 
 export class LoginError extends Error {}
 /** 采集途中 shkjdx_session 失效（被踢下线 / 过期 / 需要重新认证） */
-export class AuthLostError extends Error {}
+export class AuthLostError extends Error {
+  constructor(message, options) {
+    super(message, options)
+    this.name = 'AuthLostError'
+    this.status = 401
+    this.publicMessage = '后台自动恢复 OA 登录未成功，请稍后再试；已暂停重复登录以避免风控'
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -180,7 +187,10 @@ export class TreeClient {
         })
         const text = (await res.text()).trim()
         if (looksAuthLost(res, text)) throw new AuthLostError('shkjdx_session 已失效或过期')
-        return text.startsWith('[') ? JSON.parse(text) : []
+        // OA 在请求过密时会返回 HTTP 200 + 空响应体。这不是「全部约满」，
+        // 必须当成失败（抛错走重试，最终返回 null），否则会把限流误记成约满。
+        if (!text.startsWith('[')) throw new Error(`非预期响应：${text.slice(0, 40) || '(空响应)'}`)
+        return JSON.parse(text)
       } catch (err) {
         if (err instanceof AuthLostError) throw err // 失效不做重试，交给上层重登
         if (attempt === this.retries - 1) return null
@@ -210,6 +220,13 @@ export class TreeClient {
       await sleep(20)
     }
     return found
+  }
+
+  /** 列出某场馆的全部场地（静态，不带可用性语义）；用于拿场地树节点 id 供预约使用 */
+  async children(venue) {
+    if (!venue.isParent) return [{ id: venue.id, name: venue.name }]
+    const nodes = await this.expand(venue.id, venue.cat, 99, '2000-01-01')
+    return nodes === null ? null : nodes.map((n) => ({ id: n.id, name: n.name }))
   }
 
   /** 查询单个场馆某天某时段的可约场地数组；null = 请求失败 */

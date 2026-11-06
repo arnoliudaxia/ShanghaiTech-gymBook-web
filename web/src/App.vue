@@ -4,11 +4,13 @@ import { fetchSnapshot } from './api'
 import { nowInShanghai } from './time'
 import OverviewMatrix from './components/OverviewMatrix.vue'
 import VenueGrid from './components/VenueGrid.vue'
+import ApplicationsPanel from './components/ApplicationsPanel.vue'
 
 const snap = ref({ status: 'idle', data: null, error: null, progress: { done: 0, total: 0 }, schedule: [] })
 const now = ref(nowInShanghai())
 const clock = ref(Date.now())
 const selected = ref(null)
+const quotaVersion = ref(0)
 let pollTimer = null
 let clockTimer = null
 
@@ -87,6 +89,8 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <ApplicationsPanel @cancelled="quotaVersion++" @reconciled="quotaVersion++" />
+
     <main v-if="!data" class="empty">
       <div v-if="status === 'loading'" class="spinner" />
       <template v-if="status === 'loading'">
@@ -106,11 +110,11 @@ onBeforeUnmount(() => {
     <main v-else class="content">
       <OverviewMatrix :venues="data.venues" :dates="data.dates" :now="now" :selected="current?.id" @select="selected = $event" />
 
-      <VenueGrid v-if="current" :venue="current" :dates="data.dates" :now="now" />
+      <VenueGrid v-if="current" :venue="current" :dates="data.dates" :now="now" :quota-version="quotaVersion" />
 
       <footer class="foot">
         <span>时段口径：{{ data.slots[0] }} … {{ data.slots[data.slots.length - 1] }}（11 段）</span>
-        <span v-if="data.skipped?.length">已忽略仅整体预约的场馆：{{ data.skipped.join('、') }}</span>
+        <span v-if="data.skipped?.length">已忽略不支持预约的场馆：{{ data.skipped.join('、') }}</span>
         <span v-if="schedule.length">刷新规则：{{ schedule.map((r) => r.expression).join(' / ') }}（cron.txt）</span>
         <span>绿色 ✓ = 可约（单片场馆）；绿色数字 = 该时段仍可约的场地片数</span>
       </footer>

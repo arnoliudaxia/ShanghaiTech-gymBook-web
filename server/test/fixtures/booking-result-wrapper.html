@@ -1,0 +1,10 @@
+<!doctype html><iframe id="bodyiframe"></iframe>
+<script>
+var bodyiframeurl = location.href.substring(location.href.indexOf("ManageRequestNoForm.jsp?")+24);
+bodyiframeurl=bodyiframeurl+"&forward="+forward+"&submit="+submit+"&f_weaver_belongto_userid="+userid+"&f_weaver_belongto_usertype="+usertype;
+function setbodyiframe(){
+ document.getElementById("bodyiframe").src="ManageRequestNoFormIframe.jsp?"+bodyiframeurl;
+ initNewRequestFrame1();
+}
+if (window.addEventListener) { window.addEventListener("load", setbodyiframe, false); }
+</script>

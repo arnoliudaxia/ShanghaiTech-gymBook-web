@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { cleanName, freeSlotCount, relativeDay, shortDate, weekday } from '../time'
+import { bookingDatePolicy } from '../../../shared/booking-date.mjs'
 
 const props = defineProps({
   venues: { type: Array, required: true },
@@ -16,7 +17,7 @@ const rows = computed(() =>
   [...props.venues]
     .map((v) => ({
       venue: v,
-      cells: props.dates.map((d) => ({ date: d, free: freeSlotCount(v, d, props.now) })),
+      cells: props.dates.map((d) => ({ date: d, free: freeSlotCount(v, d, props.now), policy: bookingDatePolicy(d, props.now) })),
       total: props.dates.reduce((s, d) => s + freeSlotCount(v, d, props.now), 0),
     }))
     .sort((a, b) => b.total - a.total)
@@ -61,7 +62,8 @@ const heat = (free) => {
           <small>{{ r.venue.isParent ? `${r.venue.children} 片场地` : '整体预约' }}</small>
         </span>
         <span v-for="c in r.cells" :key="c.date" class="cell" :class="{ zero: c.free === 0 }" :style="heat(c.free)">
-          <b>{{ c.free }}</b><small>/{{ maxSlots }}</small>
+          <template v-if="c.policy.allowed"><b>{{ c.free }}</b><small>/{{ maxSlots }}</small></template>
+          <small v-else :title="c.policy.message">{{ c.policy.reason === 'past' ? '已过' : '尚未开放' }}</small>
         </span>
         <span class="col-total" :class="{ zero: r.total === 0 }">{{ r.total }}</span>
       </button>
